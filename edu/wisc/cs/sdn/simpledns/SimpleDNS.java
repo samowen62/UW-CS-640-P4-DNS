@@ -13,7 +13,8 @@ import java.net.InetSocketAddress;
 public class SimpleDNS 
 {
 	public static DatagramSocket socket;
-	public static DatagramPacket send;
+//	public static DatagramSocket finalSocket;
+//	public static DatagramPacket send;
 
 	public static void main(String[] args)
 	{
@@ -37,7 +38,7 @@ public class SimpleDNS
 
 		try{
 			socket = new DatagramSocket(8053);
-			
+
 			byte[] buffer = new byte[4096];
 			DatagramPacket packet = new DatagramPacket(buffer, buffer.length);
 			
@@ -56,11 +57,22 @@ public class SimpleDNS
                                	for(DNSQuestion q : questions){                         
                                         System.out.println("Question: " + q);           
         				if(q.getType() == DNS.TYPE_A || q.getType() == DNS.TYPE_NS || q.getType() == DNS.TYPE_CNAME || q.getType() == DNS.TYPE_AAAA){
-                                	
+						InetAddress origAddr = packet.getAddress();
+						int origPort = packet.getPort();                                	
+						//finalSocket = new DatagramSocket(origPort);						
+						DatagramPacket answerPacket = null;
+
 						if(received.isRecursionDesired())
-							waitForResponseRecursive(dnsRoot, received);
+							answerPacket = waitForResponseRecursive(dnsRoot, received);
 						//else
 						//	waitForNormalResponse(dnsRoot, received);
+						
+						answerPacket.setAddress(origAddr);
+						answerPacket.setPort(origPort);
+
+						DNS answer = DNS.deserialize(answerPacket.getData(), answerPacket.getData().length);
+						System.out.println("Sending Final Packet: "+answer+"\n Port: "+origPort);		
+						socket.send(answerPacket);
 					}
 				} 
 			}
@@ -71,7 +83,7 @@ public class SimpleDNS
 
 	}
 
-	public static void waitForResponseRecursive(InetAddress dnsRoot, DNS received){
+	public static DatagramPacket waitForResponseRecursive(InetAddress dnsRoot, DNS received){
 		
 		try{
 			DNS queryReceived = new DNS();
@@ -108,10 +120,12 @@ public class SimpleDNS
 				
 				additional = newReceived.getAdditional();
 				authorities = newReceived.getAuthorities();
+				DNSResourceRecord addRecord = null;
 				boolean found = false;
 				short authType = 0;
 				short addType = 0;
 
+			//	System.out.println("ans: "+newReceived.getAnswers().size() + " auth: "+newReceived.getAuthorities().size() + "add: "+additional.size());
 				if(newReceived.getAnswers().size() == 0){
 					for(DNSResourceRecord auth : authorities){
 						for(DNSResourceRecord add : additional){
@@ -119,17 +133,73 @@ public class SimpleDNS
 							addType = add.getType();
 							if((addType == DNS.TYPE_AAAA || addType == DNS.TYPE_A) && authType == DNS.TYPE_NS){
 								found = true;
+								addRecord = add;
 								break;
 							}
 						}
+						if(found) break;
 					}
+					//System.out.println(found+" and "+addRecord);
 					if(!found){
-						send = packetSend;
-						System.out.println("Ye a gay");
-						return;
+						//send = packetSend;
+						System.out.println("Nothing could be found!");
+						return null;
+					}else{
+						InetAddress nextAddr = ((DNSRdataAddress)addRecord.getData()).getAddress();
+	                                        DatagramPacket nextTry = new DatagramPacket(sendPacket.getData(),sendPacket.getLength(),nextAddr,53);
+        	                                System.out.println("sending again on "+nextAddr+"\naddRecord: "+addRecord);
+                	                        socket.send(nextTry);
 					}
-
+								
 				}else{
+					
+				
+					DNSResourceRecord answer = newReceived.getAnswers().get(0);
+					DNSQuestion question = newReceived.getQuestions().get(0);
+
+					if(answer.getType() != DNS.TYPE_CNAME){
+						done = true;
+						//if(question.getType() == DNS.TYPE_A)
+							//add .getAnswers() to txt
+				
+						received.setAnswers(newReceived.getAnswers());
+						received.setRecursionAvailable(true);
+						received.setRecursionDesired(true);
+						received.setOpcode((byte)0);
+						received.setRcode((byte)0);
+						received.setAuthoritative(false);
+						received.setAuthenicated(false);
+						received.setCheckingDisabled(false);
+						received.setTruncated(false);
+						received.setQuery(false);
+
+						received.setQuestions(received.getQuestions());
+					System.out.println("GOING TO SEND: "+received);	
+						DatagramPacket newPacket = new DatagramPacket(received.serialize(),received.getLength());
+						return newPacket;
+
+					}
+					else{
+						DNS newQuery = new DNS();
+						newQuery.setId(received.getId());
+						newQuery.setQuery(true);
+						newQuery.setTruncated(false);
+						newQuery.setAuthenicated(false);
+						newQuery.setRecursionDesired(true);
+						newQuery.setOpcode((byte)0);
+						
+						DNSQuestion query = new DNSQuestion();
+						query.setName(((DNSRdataName)answer.getData()).getName());
+						query.setType(question.getType());
+					
+						List<DNSQuestion> newQueryQuest = new ArrayList<DNSQuestion>();
+						newQueryQuest.add(query);
+						newQuery.setQuestions(newQueryQuest);
+
+						DatagramPacket newQueryPacket = new DatagramPacket(newQuery.serialize(), newQuery.getLength(), dnsRoot, 53);
+						socket.send(newQueryPacket);
+
+					}
 
 
 
@@ -142,7 +212,7 @@ public class SimpleDNS
 		catch(Exception e){
 			System.out.println("error here:" + e);
 		}
-
+		return null;
 	}
 
 	public static String[] checkArgs(String[] args) {
