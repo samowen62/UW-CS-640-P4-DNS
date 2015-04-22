@@ -2,19 +2,19 @@ package edu.wisc.cs.sdn.simpledns;
 
 import edu.wisc.cs.sdn.simpledns.packet.*;
 import java.io.*;
-import java.util.ArrayList;
-import java.util.Arrays;
-import java.util.List;
+import java.util.*;
 import java.net.DatagramPacket;
 import java.net.DatagramSocket;
 import java.net.InetAddress;
 import java.net.InetSocketAddress;
+import java.lang.Math.*;
 
 public class SimpleDNS 
 {
 	public static DatagramSocket socket;
 //	public static DatagramSocket finalSocket;
 //	public static DatagramPacket send;
+	public static Map<String, List<String>> ipAddresses;
 
 	public static void main(String[] args)
 	{
@@ -29,8 +29,18 @@ public class SimpleDNS
 		String[] entry = new String [2];
 		
 		try (BufferedReader br = new BufferedReader(new FileReader(new File(csv)))) {
+			ipAddresses = new HashMap<String, List<String>>();
     			while ((line = br.readLine()) != null) {	
     				entry = line.split(",");
+				String [] ip = entry[0].split("/");
+				//String [] ipAddr = ((String)ip[0]).split(".");
+
+				List<String> hashEntry = new ArrayList<String>();
+				hashEntry.add(ip[1]);
+				hashEntry.add(entry[1]);
+				ipAddresses.put(ip[0], hashEntry);
+
+				//System.out.println(intAddress);
 			}
 		} catch( Exception e){
 			System.err.println(e);
@@ -140,7 +150,7 @@ public class SimpleDNS
 							authType = auth.getType();
 							addType = add.getType();
 							if(type == DNS.TYPE_NS){
-								System.out.println(add.getName()+"  ||||  "+name+ "||| "+add.getName().equals(name));
+								//System.out.println(add.getName()+"  ||||  "+name+ "||| "+add.getName().equals(name));
 
 								addRecord = add;
 								if(add.getName().equals(name)){
@@ -198,9 +208,45 @@ public class SimpleDNS
 
 					if(answer.getType() != DNS.TYPE_CNAME){
 						done = true;
-						//if(question.getType() == DNS.TYPE_A)
-							//add .getAnswers() to txt
-						received.setAnswers(newReceived.getAnswers());
+					
+						List<DNSResourceRecord> auths = newReceived.getAdditional();
+						List<DNSResourceRecord> answers = newReceived.getAnswers();	
+						received.setAnswers(answers);
+						if(question.getType() == DNS.TYPE_A){
+							Iterator iter = ipAddresses.entrySet().iterator();
+						
+							while(iter.hasNext()){
+								Map.Entry entry = (Map.Entry)iter.next();
+								List<String> current = (List<String>)entry.getValue();	
+								for(DNSResourceRecord a : answers){
+									String thisIp = ((DNSRdataAddress)a.getData()).toString();
+									int mask = Integer.parseInt(current.get(0));
+									long ip1 = convertIp((String)entry.getKey()) >>> mask;
+									long ip2 = convertIp(thisIp) >>> mask;
+									//System.out.println(ip1 + "::"+ip2);
+									if(ip1 == ip2){
+										DNSResourceRecord textAns = new DNSResourceRecord();
+										textAns.setTtl(3600);
+										textAns.setType(DNS.TYPE_TXT);
+										textAns.setName(a.getName());
+										DNSRtext data = new DNSRtext((current.get(1) + "-" + (String)entry.getKey()));
+										data.set((current.get(1) + "-" + (String)entry.getKey()));										
+	
+										textAns.setData(data);
+										System.out.println(data);
+										auths.add(textAns);
+										//System.out.println("fuck you");
+										//received.addAnswer(textAns);			
+										break;
+									}
+								}
+								//if(finished)
+								//	break;
+							}
+						}
+							
+						//received.setAnswers(answers);
+						received.setAuthorities(auths);
 						received.setRecursionAvailable(true);
 						received.setRecursionDesired(true);
 						received.setOpcode((byte)0);
@@ -212,7 +258,7 @@ public class SimpleDNS
 						received.setQuery(false);
 
 						received.setQuestions(received.getQuestions());
-					System.out.println("GOING TO SEND: "+received);	
+						System.out.println("GOING TO SEND: "+received);	
 						DatagramPacket newPacket = new DatagramPacket(received.serialize(),received.getLength());
 						return newPacket;
 
@@ -251,6 +297,15 @@ public class SimpleDNS
 			System.out.println("error here:" + e);
 		}
 		return null;
+	}
+
+	public static long convertIp(String addr){
+		long ip = 0;
+		String[] vals = addr.split("\\.");
+		for(int i = 0; i < 4; i++){
+			ip += Integer.parseInt(vals[i]) << (24 - (8 * i));
+		}
+		return ip;
 	}
 
 	public static DatagramPacket waitForNormalResponse(InetAddress dnsRoot, DNS received, DatagramPacket packet){
