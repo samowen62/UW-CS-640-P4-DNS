@@ -22,7 +22,6 @@ public class DNSRtext implements DNSRdata
 	}
 	
 	public byte[] serialize(){
-//		return this.text.getBytes();
 		byte[] data = new byte[text.length()+ 1];
 		ByteBuffer bb = ByteBuffer.wrap(data);
 		

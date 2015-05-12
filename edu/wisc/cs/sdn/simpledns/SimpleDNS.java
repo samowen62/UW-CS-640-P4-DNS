@@ -12,8 +12,6 @@ import java.lang.Math.*;
 public class SimpleDNS 
 {
 	public static DatagramSocket socket;
-//	public static DatagramSocket finalSocket;
-//	public static DatagramPacket send;
 	public static Map<String, List<String>> ipAddresses;
 
 	public static void main(String[] args)
